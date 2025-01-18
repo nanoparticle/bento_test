@@ -34,7 +34,7 @@ SPIClass SPI2_DRV(SPI2_DRV_MOSI, SPI2_DRV_MISO, SPI2_DRV_SCK, PNUM_NOT_DEFINED);
 #define SPI3_ENC_MISO PC11
 #define SPI3_ENC_SCK PC10
 #define SPI3_ENC_CS PC15
-SPIClass SPI3_ENC(PNUM_NOT_DEFINED, SPI3_ENC_MISO, SPI3_ENC_SCK, PNUM_NOT_DEFINED);
+SPIClass SPI3_ENC(PB5_ALT1, SPI3_ENC_MISO, SPI3_ENC_SCK, PNUM_NOT_DEFINED);
 
 // User Button and LED Pin Definitions
 #define PC13_USR_BTN PC13
@@ -85,7 +85,7 @@ HardwareSerial Serial3_Debug (USART3_RX, USART3_TX);
 
 
 // PROGRAM CONFIGURATION PARAMETERS
-#define MOTOR_POLE_PAIRS 11
+#define MOTOR_POLE_PAIRS 14
 #define DRV_CSA_GAIN DRV8316_CSAGain::Gain_0V15 //TODO: Fix enum labels (they are not correct)
 
 
@@ -93,7 +93,7 @@ HardwareSerial Serial3_Debug (USART3_RX, USART3_TX);
 #define VSENSE_DIVIDER_COEFFICIENT 13.39669421487603
 #define CSENSE_DIVIDER_COEFFICIENT 3.584229390681004
 #define VREFBUF_VOLTAGE 2.9
-#define DRV_CSA_MILLIVOLTS_PER_AMP (150 * pow(2, (int)DRV_CSA_GAIN))
+#define DRV_CSA_MILLIVOLTS_PER_AMP (150 * pow(2, (int)DRV_CSA_GAIN) * (VREFBUF_VOLTAGE / 3.3))
 
 
 BLDCMotor motor (MOTOR_POLE_PAIRS);
@@ -125,6 +125,9 @@ void setup() {
 
   // Initialize Serial Comms
   SerialUSB.begin(115200);
+  // enable more verbose output for debugging
+  // comment out if not needed
+  SimpleFOCDebug::enable(&SerialUSB);
   motor.useMonitoring(SerialUSB); // Select serial interface for motor to use
   motor.monitor_downsample = 0; // Begin with real-time monitoring disabled
   commander.add('M', handleCommand, "motor command"); // Add command handler
@@ -143,15 +146,14 @@ void setup() {
     SerialUSB.println("INFO: Only detected USB power, waiting for VAUX before continuing...");
     delay(500);
   }
-
-  SerialUSB.println("INFO: VAUX detected, initializing...");
   
+  SerialUSB.println("INFO: VAUX detected, initializing...");
 
   // Initialize Motor Control System
   sensor.init(&SPI3_ENC);
   motor.linkSensor(&sensor);
-
   driver.voltage_power_supply = getBusVoltage();
+  driver.enable_active_high = true;
   driver.init(&SPI2_DRV);
   driver.setBuckVoltage(DRV8316_BuckVoltage::VB_5V); // Increase buck voltage to 5V for CAN transciever
   driver.setBuckCurrentLimit(DRV8316_BuckCurrentLimit::Limit_600mA);
@@ -170,41 +172,36 @@ void setup() {
   driver.setOCPDeglitchTime(DRV8316_OCPDeglitch::Deglitch_1us6);
   driver.setCurrentSenseGain(DRV_CSA_GAIN);
   driver.setRecirculationMode(DRV8316_Recirculation::CoastMode);
-  driver.setBuckCurrentLimit(DRV8316_BuckCurrentLimit::Limit_600mA);
 
   motor.linkDriver(&driver);
+  current_sense.linkDriver(&driver);
+  motor.linkCurrentSense(&current_sense);
+
+  current_sense.init();
+
+  motor.voltage_sensor_align = 1.5;
+  motor.voltage_limit = 5;
+  motor.velocity_limit = 200;
   
   motor.foc_modulation = FOCModulationType::SpaceVectorPWM;
-  // motor.controller = MotionControlType::angle;
-  motor.controller = MotionControlType::angle_openloop;
+  motor.controller = MotionControlType::angle;
+  // motor.controller = MotionControlType::angle_openloop;
+  motor.torque_controller = TorqueControlType::foc_current;
+
   motor.PID_velocity.P = 0.2f;
   motor.PID_velocity.I = 20;
   motor.PID_velocity.D = 0;
-  // maximal voltage to be set to the motor
-  motor.voltage_limit = 6;
-
-  // velocity low pass filtering time constant
-  // the lower the less filtered
   motor.LPF_velocity.Tf = 0.01f;
-
-  // angle P controller
   motor.P_angle.P = 20;
-  // maximal velocity of the position control
-  motor.velocity_limit = 20;
-  
-  // comment out if not needed
-  motor.useMonitoring(SerialUSB);
 
-
-  // initialize motor
   motor.init();
-  // align sensor and start FOC
   motor.initFOC();
 
   SerialUSB.println(F("Motor ready."));
 }
 
 void loop() {
+  driver.voltage_power_supply = getBusVoltage();
   motor.loopFOC(); // Calculate FOC phase voltages
   motor.move(); // Calculate motor control loops 
   motor.monitor(); // Send monitoring telemetry if enabled
