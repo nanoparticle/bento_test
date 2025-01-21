@@ -2,7 +2,7 @@
 #include <SimpleFOC.h>
 #include <SimpleFOCDrivers.h>
 #include "drivers/drv8316/drv8316.h"
-#include "encoders/mt6701/MagneticSensorMT6701SSI.h"
+// #include "encoders/mt6701/MagneticSensorMT6701SSI.h"
 #include "encoders/stm32hwencoder/STM32HWEncoder.h"
 
 #include "SimpleCAN.h"
@@ -34,7 +34,7 @@ SPIClass SPI2_DRV(SPI2_DRV_MOSI, SPI2_DRV_MISO, SPI2_DRV_SCK, PNUM_NOT_DEFINED);
 #define SPI3_ENC_MISO PC11
 #define SPI3_ENC_SCK PC10
 #define SPI3_ENC_CS PC15
-SPIClass SPI3_ENC(PB5_ALT1, SPI3_ENC_MISO, SPI3_ENC_SCK, PNUM_NOT_DEFINED);
+// SPIClass SPI3_ENC(PB5_ALT1, SPI3_ENC_MISO, SPI3_ENC_SCK, PNUM_NOT_DEFINED);
 
 // User Button and LED Pin Definitions
 #define PC13_USR_BTN PC13
@@ -98,7 +98,8 @@ HardwareSerial Serial3_Debug (USART3_RX, USART3_TX);
 
 BLDCMotor motor (MOTOR_POLE_PAIRS);
 DRV8316Driver3PWM driver (TIM1_CH1_PWM_A, TIM1_CH2_PWM_B, TIM1_CH3_PWM_C, SPI2_DRV_CS, false, PB1_DRV_PWM_EN, DRV_NFAULT);
-MagneticSensorMT6701SSI sensor(SPI3_ENC_CS);
+// MagneticSensorMT6701SSI sensor(SPI3_ENC_CS);
+CustomMT6701SSI sensor (SPI3_ENC_MISO, SPI3_ENC_SCK, SPI3_ENC_CS);
 LowsideCurrentSense current_sense (DRV_CSA_MILLIVOLTS_PER_AMP, ADC2_IN5_SOA, ADC2_IN12_SOB, ADC2_IN17_SOC);
 Commander commander (SerialUSB);
 
@@ -115,6 +116,9 @@ void handleCommand(char* cmd) {
   commander.motor(&motor,cmd);
 }
 
+
+uint32_t count = 0;
+uint32_t timestamp = 0;
 
 void setup() {
   init_dfu_trigger_handling(); // Call this first in setup()
@@ -150,7 +154,8 @@ void setup() {
   SerialUSB.println("INFO: VAUX detected, initializing...");
 
   // Initialize Motor Control System
-  sensor.init(&SPI3_ENC);
+  // sensor.init(&SPI3_ENC);
+  sensor.init();
   motor.linkSensor(&sensor);
   driver.voltage_power_supply = getBusVoltage();
   driver.enable_active_high = true;
@@ -180,8 +185,9 @@ void setup() {
   current_sense.init();
 
   motor.voltage_sensor_align = 1.5;
-  motor.voltage_limit = 5;
-  motor.velocity_limit = 200;
+  motor.voltage_limit = 10;
+  motor.current_limit = 3;
+  motor.velocity_limit = 300;
   
   motor.foc_modulation = FOCModulationType::SpaceVectorPWM;
   motor.controller = MotionControlType::angle;
@@ -189,18 +195,28 @@ void setup() {
   motor.torque_controller = TorqueControlType::foc_current;
 
   motor.PID_velocity.P = 0.2f;
-  motor.PID_velocity.I = 20;
+  motor.PID_velocity.I = 10;
   motor.PID_velocity.D = 0;
+  motor.PID_velocity.limit = 3;
   motor.LPF_velocity.Tf = 0.01f;
-  motor.P_angle.P = 20;
+  motor.P_angle.P = 50;
+  motor.P_angle.limit = 200;
 
   motor.init();
   motor.initFOC();
 
   SerialUSB.println(F("Motor ready."));
+  timestamp = millis();
 }
 
 void loop() {
+  if (millis() - timestamp > 1000) {
+    SerialUSB.println(count);
+    count = 0;
+    timestamp = millis();
+  }
+  count++;
+
   driver.voltage_power_supply = getBusVoltage();
   motor.loopFOC(); // Calculate FOC phase voltages
   motor.move(); // Calculate motor control loops 
