@@ -5,8 +5,10 @@
 // #include "encoders/mt6701/MagneticSensorMT6701SSI.h"
 #include "encoders/stm32hwencoder/STM32HWEncoder.h"
 
-#include "SimpleCAN.h"
-#include <CSE_ArduinoRS485.h>
+// #include "SimpleCAN.h"
+#include "SimpleCAN/SimpleCAN.h"
+// #include <CSE_ArduinoRS485.h>
+#include <Bonezegei_RS485.h>
 
 #include "util.h"
 
@@ -49,7 +51,7 @@ SPIClass SPI2_DRV(SPI2_DRV_MOSI, SPI2_DRV_MISO, SPI2_DRV_SCK, PNUM_NOT_DEFINED);
 #define USART2_TX PA2
 #define USART2_DE PA1
 HardwareSerial Serial2 (USART2_RX, USART2_TX);
-RS485Class RS485 (Serial2, USART2_DE);
+Bonezegei_RS485 RS485 (Serial2, USART2_DE);
 
 // CAN Bus Transciever Pin Definitions
 #define FDCAN_RX_BOOT0 PB8
@@ -129,6 +131,19 @@ void setup() {
 
   // Initialize Serial Comms
   SerialUSB.begin(115200);
+
+  RS485.begin(115200);
+  CAN.begin(1000000);
+  
+  // uint8_t data = 1;
+  while (1) {
+    RS485.println("Hi");
+    uint8_t data[] = {0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x56, 0x78};
+    CanMsg msg = CanMsg(0x80AB, 16, data);
+    CAN.write(msg);
+    // data++;
+    delay(500);
+  }
   // enable more verbose output for debugging
   // comment out if not needed
   SimpleFOCDebug::enable(&SerialUSB);

@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "full-test-runner"
+version = "0.1.0"
+description = ""
+authors = ["nanoparticle <mcnanoparticle@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pyserial = "^3.5"
+python-can = "^4.5.0"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
