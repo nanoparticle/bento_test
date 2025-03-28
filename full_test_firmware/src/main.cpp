@@ -4,13 +4,15 @@
 #include "drivers/drv8316/drv8316.h"
 // #include "encoders/mt6701/MagneticSensorMT6701SSI.h"
 #include "encoders/stm32hwencoder/STM32HWEncoder.h"
+// #include "utilities/stm32math/STM32G4CORDICTrigFunctions.h"
 
 // #include "SimpleCAN.h"
 #include "SimpleCAN/SimpleCAN.h"
-// #include <CSE_ArduinoRS485.h>
-#include <Bonezegei_RS485.h>
+// #include <Bonezegei_RS485.h>
+#include <Adafruit_MPU6050.h>
 
 #include "util.h"
+#include "CustomHardwareSerial.h"
 
 
 // ONBOARD PERIPHERALS
@@ -49,9 +51,13 @@ SPIClass SPI2_DRV(SPI2_DRV_MOSI, SPI2_DRV_MISO, SPI2_DRV_SCK, PNUM_NOT_DEFINED);
 // RS4XX Transciever Pin Definitions
 #define USART2_RX PA3
 #define USART2_TX PA2
+// #define USART2_RX PA3_ALT1
+// #define USART2_TX PA2_ALT1
 #define USART2_DE PA1
-HardwareSerial Serial2 (USART2_RX, USART2_TX);
-Bonezegei_RS485 RS485 (Serial2, USART2_DE);
+// HardwareSerial Serial2_RS485 (USART2_RX, USART2_TX);
+// Bonezegei_RS485 RS485 (Serial2_RS485, USART2_DE);
+CustomHardwareSerial Serial2_RS485 (USART2_RX, USART2_TX);
+Custom_RS485 RS485 (Serial2_RS485, USART2_DE);
 
 // CAN Bus Transciever Pin Definitions
 #define FDCAN_RX_BOOT0 PB8
@@ -70,7 +76,7 @@ STM32HWEncoder encoder (ENCODER_PPR, TIM3_CH1_ENCA, TIM3_CH1_ENCB, TIM3_ETR_ENCZ
 // Auxiliary I2C Input Pin Definitions
 #define I2C1_SDA PB7
 #define I2C1_SCL PA15
-TwoWire Wire1 (I2C1_SDA, I2C1_SCL);
+TwoWire Wire1_AUX (I2C1_SDA, I2C1_SCL);
 
 // Auxiliary SPI Input Pin Definitions
 #define SPI1_MISO PA6
@@ -104,7 +110,7 @@ DRV8316Driver3PWM driver (TIM1_CH1_PWM_A, TIM1_CH2_PWM_B, TIM1_CH3_PWM_C, SPI2_D
 CustomMT6701SSI sensor (SPI3_ENC_MISO, SPI3_ENC_SCK, SPI3_ENC_CS);
 LowsideCurrentSense current_sense (DRV_CSA_MILLIVOLTS_PER_AMP, ADC2_IN5_SOA, ADC2_IN12_SOB, ADC2_IN17_SOC);
 Commander commander (SerialUSB);
-
+Adafruit_MPU6050 mpu;
 
 float getBusVoltage() {
   return (analogRead(ADC1_IN1_VSENSE) / 4096.0) * VREFBUF_VOLTAGE * VSENSE_DIVIDER_COEFFICIENT;
@@ -124,26 +130,71 @@ uint32_t timestamp = 0;
 
 void setup() {
   init_dfu_trigger_handling(); // Call this first in setup()
+  // SimpleFOC_CORDIC_Config(); // Enable hardware accelerated trigonometry functions
 
   // Turn on user LED to show code is running
   pinMode(TIM8_CH1_USR_LED, OUTPUT_OPEN_DRAIN);
-  digitalWrite(TIM8_CH1_USR_LED, LOW);
+  // digitalWrite(TIM8_CH1_USR_LED, LOW);
+  digitalWrite(TIM8_CH1_USR_LED, HIGH);
 
   // Initialize Serial Comms
   SerialUSB.begin(115200);
+  Serial3_Debug.begin(115200);
+  RS485.begin(3000000);
+  // CAN.begin(1000000);
+  CAN.begin(FD_CANABLE_1MBAUD_5MBAUD);
 
-  RS485.begin(115200);
-  CAN.begin(1000000);
+  mpu.begin(0x68, &Wire1_AUX);
+  sensors_event_t a, g, temp;
+
+  uint8_t data = 1;
+  uint8_t rs485_data_expected_len = 4;
+  uint8_t rs485_data_len = 10;
+  uint8_t rs485_data_index = 0;
+  uint8_t rs485_data[rs485_data_len] = {0};
   
-  // uint8_t data = 1;
+  // while (1) {
+  //   RS485.println("Hi");
+  //   delay(1000);
+  // }
+
   while (1) {
-    RS485.println("Hi");
-    uint8_t data[] = {0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x56, 0x78, 0x12, 0x34, 0x56, 0x78};
-    CanMsg msg = CanMsg(0x80AB, 16, data);
-    CAN.write(msg);
-    // data++;
-    delay(500);
+    // mpu.getEvent(&a, &g, &temp);
+    // Serial3_Debug.println("Hello");
+    // RS485.println("Hi");
+
+    while(RS485.available() > 0) {
+      if (rs485_data_index < rs485_data_len) {
+        rs485_data[rs485_data_index] = RS485.read();
+        if (rs485_data[rs485_data_index] == '\0' && rs485_data_index >= rs485_data_expected_len) {
+          uint16_t input = strtol((char *)&rs485_data[rs485_data_index - rs485_data_expected_len], NULL, 16);
+          char output[rs485_data_expected_len + 1] = {0};
+          input += 1;
+          sprintf(output, "%04X", input);
+          RS485.println(output);
+          rs485_data_index = 0;
+        } else rs485_data_index++;
+      } else break;
+      rs485_data[rs485_data_len - 1] = 0;
+      RS485.println((char *)rs485_data);
+    }
+    // digitalWrite(TIM8_CH1_USR_LED, HIGH);
+    
+    if (CAN.available()) {
+      uint8_t data_len = 2;
+      CanMsg input_msg = CAN.read();
+      uint16_t input = input_msg.data[0] << 8 | input_msg.data[1];
+      input += 1;
+      uint8_t output[data_len] = {0};
+      output[0] = input >> 8;
+      output[1] = input & 0xFF;
+      CanMsg output_msg = CanMsg(0x80AB, data_len, output);
+      CAN.write(output_msg);
+    }
   }
+
+  
+
   // enable more verbose output for debugging
   // comment out if not needed
   SimpleFOCDebug::enable(&SerialUSB);
@@ -214,7 +265,7 @@ void setup() {
   motor.PID_velocity.D = 0;
   motor.PID_velocity.limit = 3;
   motor.LPF_velocity.Tf = 0.01f;
-  motor.P_angle.P = 50;
+  motor.P_angle.P = 20;
   motor.P_angle.limit = 200;
 
   motor.init();
@@ -232,7 +283,7 @@ void loop() {
   }
   count++;
 
-  driver.voltage_power_supply = getBusVoltage();
+  // driver.voltage_power_supply = getBusVoltage();
   motor.loopFOC(); // Calculate FOC phase voltages
   motor.move(); // Calculate motor control loops 
   motor.monitor(); // Send monitoring telemetry if enabled

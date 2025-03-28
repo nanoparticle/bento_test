@@ -29,7 +29,7 @@ STM_FDCAN::STM_FDCAN(uint16_t pinRX, uint16_t pinTX, uint16_t pinSHDN) : filter_
   STM_FDCAN::pinTX_ = pinTX;
   STM_FDCAN::pinSHDN_ = pinSHDN;
 
-  if (pinSHDN != NC)
+  if (pinSHDN != CAN_NC)
   {
     pinMode(pinSHDN, OUTPUT);
   }
@@ -38,13 +38,13 @@ STM_FDCAN::STM_FDCAN(uint16_t pinRX, uint16_t pinTX, uint16_t pinSHDN) : filter_
   mode = CAN_NORMAL;
 }
 
-bool STM_FDCAN::begin(int bitrate)
-{
-  if (bitrate > 1000000)
-  {
-    failAndBlink(CAN_ERROR_BITRATE_TOO_HIGH);
-  }
+bool STM_FDCAN::begin(int can_bitrate) {
+  // UNUSED
+  return false;
+}
 
+bool STM_FDCAN::begin(STM_FDCAN_PROFILE profile)
+{
   RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
   PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_FDCAN;
   PeriphClkInitStruct.FdcanClockSelection = RCC_FDCANCLKSOURCE_PCLK1;
@@ -54,55 +54,73 @@ bool STM_FDCAN::begin(int bitrate)
     failAndBlink(CAN_ERROR_CLOCK);
   }
 
-  // __HAL_RCC_FDCAN_CLK_ENABLE();
-
-#if defined(FDCAN1_IT0_IRQn)
-  HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
-#endif
   uint32_t clockFreq = HAL_RCC_GetPCLK1Freq(); // or use HAL_RCC_GetSysClockFreq();
-
-  CanTiming timing = solveCanTiming(clockFreq, bitrate);
+  CanTiming timing = solveCanTiming(clockFreq, 1000000);
+  
   FDCAN_InitTypeDef *init = &(hcan_.Init);
   init->ClockDivider = FDCAN_CLOCK_DIV1;
-  // init->FrameFormat = FDCAN_FRAME_CLASSIC; // TODO: We may want to support faster FDCAN_FRAME_FD_BRS;
-  init->FrameFormat = FDCAN_FRAME_FD_BRS;
+  init->FrameFormat = (profile == GENERIC_1MBAUD) ? FDCAN_FRAME_CLASSIC : FDCAN_FRAME_FD_BRS;
   init->Mode = mode == CAN_LOOPBACK ? FDCAN_MODE_INTERNAL_LOOPBACK : FDCAN_MODE_NORMAL;
   init->AutoRetransmission = DISABLE;
   init->TransmitPause = ENABLE;
   init->ProtocolException = DISABLE;
 
-  init->NominalPrescaler = (uint16_t)timing.prescaler;
-  init->NominalSyncJumpWidth = 1;
-  init->NominalTimeSeg1 = timing.tseg1;
-  init->NominalTimeSeg2 = timing.tseg2;
-
-  // init->NominalPrescaler = 1;
-  // init->NominalSyncJumpWidth = 16;
-  // init->NominalTimeSeg1 = 56;
-  // init->NominalTimeSeg2 = 28;
-
-
-  // TODO: If we support proper FD frames then we'll need to set the following too
-  // init->DataPrescaler = (uint16_t)timing.prescaler; //<- max is 32
-  // init->DataSyncJumpWidth = 1;
-  // init->DataTimeSeg1 = timing.tseg1;
-  // init->DataTimeSeg2 = timing.tseg2;
-
-  // init->DataPrescaler = 1;
-  // init->DataSyncJumpWidth = 1;
-  // init->DataTimeSeg1 = timing.tseg1;
-  // init->DataTimeSeg2 = timing.tseg2;
-
-  init->DataPrescaler = 1;
-  init->DataSyncJumpWidth = 1;
-  init->DataTimeSeg1 = 28;
-  init->DataTimeSeg2 = 5;
-
-  // init->DataPrescaler = 2;
-  // init->DataSyncJumpWidth = 1;
-  // init->DataTimeSeg1 = 8;
-  // init->DataTimeSeg2 = 8;
+  bool useTransmitDelay;
+  switch (profile)
+  {
+  case FD_CANABLE_1MBAUD_2MBAUD:
+    // 1MBPS Nominal, 88% sample point (same settings as canable2-fw, works with it when data is 2MBPS and TxDelayCompensation is disabled)
+    init->NominalPrescaler = 10;
+    init->NominalSyncJumpWidth = 1;
+    init->NominalTimeSeg1 = 14;
+    init->NominalTimeSeg2 = 2;
+    // 2MBPS Nominal, 88% sample point (same settings as canable2-fw)
+    init->DataPrescaler = 5;
+    init->DataSyncJumpWidth = 1;
+    init->DataTimeSeg1 = 14;
+    init->DataTimeSeg2 = 2;
+    useTransmitDelay = false;
+    break;
+  case FD_CANABLE_1MBAUD_5MBAUD:
+    // 1MBPS Nominal, 91% sample point (works with canable2-fw when data is 5MBPS and TxDelayCompensation is enabled)
+    init->NominalPrescaler = 2;
+    init->NominalSyncJumpWidth = 1;
+    init->NominalTimeSeg1 = 76;
+    init->NominalTimeSeg2 = 8;
+    // 5MBPS Nominal, 88% sample point (same settings as canable2-fw)
+    // init->DataPrescaler = 2;
+    // init->DataSyncJumpWidth = 1;
+    // init->DataTimeSeg1 = 14;
+    // init->DataTimeSeg2 = 2;
+    init->DataPrescaler = 1;
+    init->DataSyncJumpWidth = 1;
+    init->DataTimeSeg1 = 28;
+    init->DataTimeSeg2 = 5;
+    useTransmitDelay = true;
+    break;
+  case FD_GENERIC_1MBAUD_5MBAUD:
+    // <bitrate>MBPS Nominal, 87.5% sample point (works with canable2-fw)
+    init->NominalPrescaler = (uint16_t)timing.prescaler;
+    init->NominalSyncJumpWidth = 1;
+    init->NominalTimeSeg1 = timing.tseg1;
+    init->NominalTimeSeg2 = timing.tseg2;
+    // 5MBPS Data, 85% sample point (works with 87.5% sample point reciever)
+    init->DataPrescaler = 1;
+    init->DataSyncJumpWidth = 1;
+    init->DataTimeSeg1 = 28;
+    init->DataTimeSeg2 = 5;
+    useTransmitDelay = true;
+    break;
+  case GENERIC_1MBAUD:
+  default:
+    // <bitrate>MBPS Nominal, 87.5% sample point (works with canable2-fw)
+    init->NominalPrescaler = (uint16_t)timing.prescaler;
+    init->NominalSyncJumpWidth = 1;
+    init->NominalTimeSeg1 = timing.tseg1;
+    init->NominalTimeSeg2 = timing.tseg2;
+    useTransmitDelay = false;
+    break;
+  }
 
   init->StdFiltersNbr = 0;
   init->ExtFiltersNbr = 0;
@@ -124,7 +142,7 @@ bool STM_FDCAN::begin(int bitrate)
 #endif
   logStatus('i',
             HAL_FDCAN_Init(&hcan_));
-  if (pinSHDN_ != NC)
+  if (pinSHDN_ != CAN_NC)
   {
     digitalWrite(pinSHDN_, LOW);
   }
@@ -132,8 +150,13 @@ bool STM_FDCAN::begin(int bitrate)
   started_ = true;
   applyFilter();
   
-  HAL_FDCAN_ConfigTxDelayCompensation(&hcan_, init->DataTimeSeg1 * init->DataPrescaler, 0);
-  HAL_FDCAN_EnableTxDelayCompensation(&hcan_);
+  if (useTransmitDelay) {
+    HAL_FDCAN_ConfigTxDelayCompensation(&hcan_, init->DataTimeSeg1 * init->DataPrescaler, 0);
+    HAL_FDCAN_EnableTxDelayCompensation(&hcan_);
+  } else {
+    HAL_FDCAN_DisableTxDelayCompensation(&hcan_);
+  }
+  
 
   return logStatus('s',
                    HAL_FDCAN_Start(&hcan_));
@@ -143,7 +166,7 @@ bool STM_FDCAN::begin(int bitrate)
 
 void STM_FDCAN::end()
 {
-  if (pinSHDN_ != NC)
+  if (pinSHDN_ != CAN_NC)
   {
     digitalWrite(pinSHDN_, HIGH);
   }
@@ -234,10 +257,8 @@ int STM_FDCAN::write(CanMsg const &txMsg)
       .TxFrameType = txMsg.isRTR() ? FDCAN_REMOTE_FRAME : FDCAN_DATA_FRAME,
       .DataLength = lengthToDLC(txMsg.data_length),
       .ErrorStateIndicator = FDCAN_ESI_ACTIVE,
-      // .BitRateSwitch = FDCAN_BRS_OFF,
-      .BitRateSwitch = FDCAN_BRS_ON,
-      // .FDFormat = FDCAN_CLASSIC_CAN,
-      .FDFormat = FDCAN_FD_CAN,
+      .BitRateSwitch = (hcan_.Init.FrameFormat == FDCAN_FRAME_FD_BRS) ? FDCAN_BRS_ON : FDCAN_BRS_OFF,
+      .FDFormat = (hcan_.Init.FrameFormat == FDCAN_FRAME_FD_BRS) ? FDCAN_FD_CAN : FDCAN_CLASSIC_CAN,
       .TxEventFifoControl = FDCAN_NO_TX_EVENTS,
       .MessageMarker = 0,
   };

@@ -3,9 +3,11 @@
 #include "Arduino.h"
 #include "HardwareCAN.h"
 
-#ifndef NC
-#define NC 0xFF
-#endif
+// #ifndef NC
+// #define NC 0xFF
+// #endif
+
+#define CAN_NC 0xFF
 
 #ifndef MAX_FRAME_SIZE
 #define MAX_FRAME_SIZE 64

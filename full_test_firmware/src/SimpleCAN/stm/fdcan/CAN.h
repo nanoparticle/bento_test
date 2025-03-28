@@ -5,13 +5,21 @@
 #include "Arduino.h"
 #include "SimpleCAN/BaseCAN.h"
 
+enum STM_FDCAN_PROFILE {
+  FD_CANABLE_1MBAUD_2MBAUD,
+  FD_CANABLE_1MBAUD_5MBAUD,
+  FD_GENERIC_1MBAUD_5MBAUD,
+  GENERIC_1MBAUD,
+};
+
 class STM_FDCAN : public BaseCAN
 {
 
 public:
-	STM_FDCAN(uint16_t pinRX, uint16_t pinTX, uint16_t pinSHDN = NC);
+	STM_FDCAN(uint16_t pinRX, uint16_t pinTX, uint16_t pinSHDN = CAN_NC);
 
 	bool begin(int can_bitrate) override;
+	bool begin(STM_FDCAN_PROFILE profile);
 	void end() override;
 
 	void filter(CanFilter filter) override;

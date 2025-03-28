@@ -12,6 +12,7 @@
 #include "utility/spi_com.h"
 #include "pinconfig.h"
 #include "stm32yyxx_ll_spi.h"
+#include "CustomHardwareSerial.h"
 
 void init_dfu_trigger_handling(void);
 
@@ -44,4 +45,75 @@ private:
   uint32_t clockFreq = 8000000;
   BitOrder bitOrder = MT6701_BITORDER;
   SPIMode  dataMode = SPI_MODE2;
+};
+
+
+// Implementation inspired by https://github.com/bonezegei/Bonezegei_RS485
+class Custom_RS485 {
+  public:
+    Custom_RS485(CustomHardwareSerial &serial, int dir) {
+      for (size_t i = 0; i < MAX_NUM_INSTANCES; i++) {
+        if (instances[i]) continue;
+        instances[i] = this;
+        break;
+      }
+      serial.attach_custom_tx_callback(_handle_TxCplt_Callback);
+
+      hardserial = (CustomHardwareSerial *)&serial;
+      _dir = dir;
+      pinMode(_dir, OUTPUT);
+      digitalWrite(_dir, LOW);
+    }
+  
+    void begin(int baud) {
+      hardserial->begin(baud);
+    }
+    
+    void write(char ch) {
+      digitalWrite(_dir, HIGH);
+      hardserial->write(ch);
+    }
+    
+    void print(const char *ch) {
+      digitalWrite(_dir, HIGH);
+      hardserial->print(ch);
+    }
+    
+    void println(const char *ch) {
+      digitalWrite(_dir, HIGH);
+      hardserial->println(ch);
+    }
+    
+    char available() {
+      return hardserial->available();
+    }
+    
+    int read() {
+      return hardserial->read();
+    }
+
+    static void _handle_TxCplt_Callback(serial_t *obj_in) {
+      for (size_t i = 0; i < MAX_NUM_INSTANCES; i++) {
+        if (instances[i]) {
+          // Copied from uart.c file's get_serial_obj() function
+          struct serial_s *obj_s;
+          serial_t *obj;
+          UART_HandleTypeDef * huart = instances[i]->hardserial->getHandle();
+
+          obj_s = (struct serial_s *)((char *)huart - offsetof(struct serial_s, handle));
+          obj = (serial_t *)((char *)obj_s - offsetof(serial_t, uart));
+
+          // Instance match found, set transceiver to receive mode
+          if (obj_in == obj) {
+            digitalWrite(instances[i]->_dir, LOW);
+          }
+        } else break;
+      }
+    }
+    
+    int _dir;
+    int _baud;
+    CustomHardwareSerial *hardserial;
+    static const size_t MAX_NUM_INSTANCES = 10;
+    inline static Custom_RS485 * instances[MAX_NUM_INSTANCES];
 };
